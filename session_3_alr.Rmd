@@ -1,0 +1,123 @@
+---
+title: "session 3"
+author: "Amelia Ritger"
+date: "1/28/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warnings=FALSE, messages=FALSE)
+```
+
+### 1. Attach necessary packages
+```{r}
+library(tidyverse)
+library(sf)
+library(tmap)
+```
+
+### 2. Read in CA eco-regions data
+```{r}
+ca_eco <- read_sf(dsn=".", layer="ca_eco") %>% #all files are already in directory (.), layer= read in all files starting with ca_eco
+  select(US_L3NAME) %>% #notice how the sticky geometry...is stuck!
+  rename(region = US_L3NAME) %>% 
+  st_simplify(dTolerance=100) %>%  #decreases number of nodes that make up outline of each polygon - higher number is more simplified ## realistically, never do this. ms_simplify() or geos::gSimplify() takes polygon shape into consideration whereas st_simplify() doesn't connect separate polygons (see dTolerance = 1000000 for example)
+  st_transform(crs = 4326) #set projection in coordinate reference system (EPSG number)
+
+plot(ca_eco)
+```
+
+### 3. Read in CA counties polygons
+```{r}
+ca_counties <- read_sf(dsn=".", layer="california_county_shape_file")
+st_crs(ca_counties) = 4326
+```
+
+### 4. Read in CA dams locations & data
+```{r}
+ca_dams <- read_sf(dsn=".", layer="California_Jurisdictional_Dams")
+st_crs(ca_dams) #EPSG already set
+```
+
+### 5. Make a map of dams in CA, overlayed on eco-regions, with outlines of CA counties
+```{r}
+ggplot(data=ca_counties) +
+  geom_sf(color="black", size=0.1) +
+  geom_sf(data=ca_eco, aes(fill=region), alpha=0.5, color="NA", show.legend=TRUE) +
+  geom_sf(data=ca_dams, size=0.5, alpha=0.5) +
+  theme_classic()
+```
+
+### 6. Just explore SB county eco-regions
+```{r}
+sb <- ca_counties %>% 
+  filter(NAME=="Santa Barbara")
+
+# Clip eco-region data to only include information within SB county
+eco_clip <- st_intersection(ca_eco, sb) #look at all ca_eco, only retain areas for those eco regions bounded by sb county polygons
+
+#Now let's plot it
+ggplot() +
+  geom_sf(data=ca_counties, fill="gray90", color="gray80", size=0.2) +
+  geom_sf(data=eco_clip, aes(fill=region), color="white", size = 0.4, show.legend=TRUE) +
+  coord_sf(xlim=c(-121, -119), ylim=c(33.5, 35.5)) + #remove greater CA state, zoom into SB county
+  scale_fill_manual(values = c("magenta", "gold2", "skyblue")) + #manually set colors of different regions
+  theme_minimal()
+```
+
+### 7. Create an interactive map
+```{r}
+sb_clip_tmap <- tm_basemap("Stamen.Watercolor") +
+  tm_shape(eco_clip) +
+  tm_fill("region", palette=c("green", "purple", "yellow"), alpha=0.5) #analagous to aes(fill=region)
+
+tmap_mode("view") #plot = static, view = interactive
+sb_clip_tmap
+```
+
+### 8. How to create an 'sf' object from latitude/longitude recordings (e.g. in an Excel file)
+
+Make a mock dataset using tribble()
+```{r}
+my_example <- tribble(
+  ~id, ~lon, ~lat, 
+  "tiger", -119.4, 34.35,
+  "lion", -119.41, 34.39,
+  "bear", -119.43, 34.38
+)
+
+class(my_example) #r does not recognize lon,lat as spatial information so...
+
+animals_sf <- st_as_sf(my_example, coords=c("lon", "lat"), crs=4326) #convert to sf object
+class(animals_sf)
+```
+
+Make a map using tmap
+```{r}
+animal_map <- tm_basemap("Stamen.Watercolor") +
+  tm_shape(animals_sf) + #tells tmap where we're looking (i.e. california)
+  tm_dots(labels="id", col="purple", size=0.5) #tells tmap to plot points on map labelled with id associated
+
+animal_map
+```
+
+### 9. Chloropleth of dam counts
+```{r}
+intersection <- st_intersection(x=ca_dams, y=ca_counties)
+
+dams_per_county <- intersection %>% 
+  group_by(NAME) %>% 
+  tally()
+
+ca_tot <- ca_counties %>% 
+  st_join(dams_per_county) %>% #combine ca_counties and dams_per_county
+  select(NAME.x, n) %>%  #notice no dams observed in county has "NA"
+  rename(name=NAME.x) %>% #rename column
+  replace_na(list(n=0)) #replace NAs with 0
+
+# One more example with ggplot
+ggplot() +
+  geom_sf(data=ca_tot, aes(fill=n), size=0.2, color="white") +
+  scale_fill_continuous(low="blue", high="green") #more green indicates more dams within county
+
+```
